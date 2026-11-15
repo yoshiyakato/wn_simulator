@@ -184,7 +184,7 @@
   let W=0,H=0,DPR=1;
   let nodes=[],nats=[],edges=[],adj=new Map(),packets=[];
   let roles=new Map();
-  let blocked=0, unknownStops=0, playing=!reduce, demoMode=false, speedMul=1, showLabels=false, busy=6, gained=0, lastEv=0, liveT=0;
+  let blocked=0, unknownStops=0, p0Shown=false, playing=!reduce, demoMode=false, speedMul=1, showLabels=false, busy=6, gained=0, lastEv=0, liveT=0;
   let timeToNext=0.8, seedN=50;
   let rng=mulberry32(1234);
   const timers=[];
@@ -377,7 +377,11 @@
           &&[...nd.keys].some(k=>!nodes[origin].keys.has(k)));
         if(cand.length){ holder=pick(cand).id; break; }
       }
-      if(holder==null){ const bf=bfs(origin); par=bf.par; holder=[...par.keys()][0]; }
+      if(holder==null){   // 条件に合う所在が無い配置。Port0 でない、いちばん近いノードを所在にする（外から接続を受けられる相手だけ）
+        for(const o of nodes){ if(o.port0&&nodes.some(x=>!x.port0&&x.id!==o.id)) continue; const bf=bfs(o.id);
+          const c=nodes.filter(nd=>nd.id!==o.id&&!nd.port0&&bf.dist.has(nd.id)).sort((a,b)=>bf.dist.get(a.id)-bf.dist.get(b.id))[0];
+          if(c){ origin=o.id; par=bf.par; holder=c.id; break; } } }
+      if(holder==null){ setEvent("query","","この配置では、検索から転送までを見せられる組がありません。「NAT の内側」のバーを動かしてください。"); demoMode=false; clearTimers(); return; }
       want=[...nodes[holder].keys].find(k=>!nodes[origin].keys.has(k))||[...nodes[holder].keys][0];
       roles=new Map(); setRole(origin,"検索元",COL.query,14);
       setEvent("query","",`N${origin} が「${want}」を探しています。検索クエリが、つながっている隣のノードへ、そのまた隣へと広がります。`);
@@ -396,7 +400,7 @@
     });
     step(5200,()=>{ stagePort0(true); });
     step(11500,()=>{
-      setEvent("query","ひと通り完了","参加 → 検索 → 所在 → 転送 → Port0 の仲介、まで見ました。「▶ 再生」で自由に動かせます。",true);
+      setEvent("query","ひと通り完了",p0Shown?"参加 → 検索 → 所在 → 転送 → Port0 の仲介、まで見ました。「▶ 再生」で自由に動かせます。":"参加 → 検索 → 所在 → 転送、まで見ました（この配置では Port0 の仲介は見せられません）。「▶ 再生」で自由に動かせます。",true);
       demoMode=false;
     });
   }
@@ -404,7 +408,7 @@
   function stagePort0(fromDemo){
     if(!fromDemo){ stopDemo(); demoMode=true; setPlay(false); packets=[]; seqReset(); }
     // 見やすい組を探す: 所在 O は Port0、仲介 M と要求元 R は Port0 でない（NAT の外を優先）、R は O と直接つながっていない
-    let O=null,M=null,R=null,bestScore=-1;
+    let O=null,M=null,R=null,bestScore=-1; p0Shown=false;
     for(const o of nodes.filter(n=>n.port0)) for(const m of adj.get(o.id)) for(const r of adj.get(m)){
       if(r===o.id||nodes[r].port0) continue;
       let sc=1; if(nodes[m].nat==null) sc+=4; if(nodes[r].nat==null) sc+=4; if(!adj.get(o.id).includes(r)) sc+=2;
@@ -412,7 +416,7 @@
       if(sc>bestScore){bestScore=sc;O=o;M=m;R=r;}
     }
     if(!O){ setEvent("relay","","いまの配置では、Port0 の仲介を見せられる組（Port0 の所在と、接続を受けられる仲介・要求元）がありません。「NAT の内側」のバーを動かしてください。"); demoMode=false; return; }
-    const want=[...O.keys][0];
+    const want=[...O.keys][0]; p0Shown=true;
     roles=new Map();
     setRole(R,"要求元 R",COL.cache,13);setRole(M,"仲介 M",COL.relay,13);setRole(O.id,"所在 O・Port0",COL.key,13);
     setEvent("relay","",`要求元 N${R} が欲しいファイルは、Port0 の N${O.id} にあります。N${O.id} は NAT の内側にいて、外から接続を受けられません。直接はつなげません。`); seq.lock=true;
