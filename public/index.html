@@ -415,9 +415,9 @@
     nodes[O.id].pulse=1;nodes[R].pulse=1;nodes[M].pulse=1;
     after(3400,()=>{ setEvent("relay","",`両方とつながっている仲介 N${M} が、既存のリンクを使って、N${O.id} と N${R} の両方に相手の情報を知らせます。`);
       spawn(M,O.id,COL.relay,{r:4}); after(600,()=>spawn(M,R,COL.relay,{r:4})); });
-    after(6800,()=>{ setEvent("conn","",`張れる側から張らせます。Port0 の N${O.id} の側から、要求元 N${R} へ、外向きに新しい TCP 接続を開始します。`);
+    after(6800,()=>{ setEvent("relay","",`張れる側から張らせます。Port0 の N${O.id} の側から、要求元 N${R} へ、外向きに新しい TCP 接続を開始します。`);
       spawn(O.id,R,COL.conn,{r:4}); });
-    after(9200,()=>{ setEvent("cache","",`接続成立。N${O.id} から N${R} へ「${want}」を転送します。`);
+    after(9200,()=>{ setEvent("relay","",`接続成立。N${O.id} から N${R} へ「${want}」を転送します。`);
       burst([O.id,R],COL.cache,()=>{ gainKey(R,want); if(!fromDemo) demoMode=false; }); });
   }
 
