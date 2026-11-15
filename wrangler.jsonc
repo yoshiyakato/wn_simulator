@@ -1,0 +1,9 @@
+{
+  // Cloudflare Workers（静的アセット）で配る設定。Worker の名前は、ダッシュボードで付けた名前と同じにする
+  "name": "wn-simulator",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./public",
+    "not_found_handling": "404-page"
+  }
+}

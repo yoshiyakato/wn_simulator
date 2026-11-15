@@ -3,8 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Winny 伝搬シミュレータ</title>
-<meta name="description" content="合成データで、P2P ネットワークへの参加・検索・キャッシュ転送・Port0 の仲介の流れを見せる模擬。実ネットワークには接続しない。">
+<title>Winny トラフィックパターン可視化ツール</title>
+<link rel="icon" href="data:,">
+<meta name="description" content="合成データで、P2P ネットワークへの参加・検索・キャッシュ転送・Port0 の仲介の流れを描く模擬。実ネットワークには接続しない。Winny 本体でも互換クライアントでもない。">
 <style>
   /* レイアウト: 上=操作、中=キャンバス＋右の解説パネル、下=凡例とイベント。単一ダーク（ネットワーク監視画面の世界観） */
   :root{
@@ -90,7 +91,6 @@
     .canvas-box{min-height:470px;flex:0 0 470px}
     .panel-ex{flex:0 0 auto;max-width:none}
     .pipe{flex-direction:row;flex-wrap:wrap}
-    .sub.wide{display:none}
   }
   @media (max-width:560px){ .ctl input[type=range]{width:4.6rem} }
 </style>
@@ -98,9 +98,9 @@
 <body>
 <div class="wrap">
   <header>
-    <h1>Winny 伝搬シミュレータ</h1>
-    <span class="sub"><span class="tag">WNA</span> 参加・検索・キャッシュ・Port0 仲介の流れを可視化</span>
-    <span class="sub wide" style="margin-left:auto">合成データによる模擬。実ネットワークには接続していない。</span>
+    <h1>Winny トラフィックパターン可視化ツール</h1>
+    <span class="sub">参加・検索・キャッシュ転送・Port0 の仲介の流れを、合成データで描く</span>
+    <span class="sub note" style="margin-left:auto">模擬です。実ネットワークには接続しません。Winny 本体でも互換クライアントでもなく、開発者・権利者とは無関係です。利用を勧めるものではありません。</span>
   </header>
 
   <div class="toolbar" role="group" aria-label="操作">
@@ -126,7 +126,7 @@
       </div>
       <canvas id="cv" aria-label="Winny ネットワークの伝搬図"></canvas>
       <canvas id="sq" hidden aria-label="解説デモのシーケンス図"></canvas>
-      <div class="scope">● 図はドラッグで回せる（ドラッグすると自動回転は止まる）。上の層＝外のノード、地面＝NAT の内側。　ノード＝参加者　破線の輪＝NAT（内側の割合はバーで変更。初期値の 8 割は想定）　赤破線＝Port0＝NAT の内側のノード。外から接続を受けられず、自分から外のノードへつなぐだけなので、NAT の内側同士は直接つながらない。ポートを開けたノードは外のノードとして描いている。フォルダの数字＝手元のファイル数。所在やファイル名は架空の符号。</div>
+      <div class="scope">● 図はドラッグで回せる。上の層＝外のノード、地面＝NAT の内側。破線の輪＝NAT、赤い縁＝Port0（外から接続を受けられない）。フォルダの数字＝手元のファイル数。<br>● 本ツールの単純化：NAT の内側のノードを全部 Port0 として描いている（解析では、NAT 配下かどうかと Port0 の申告は別の判定）。内側の割合の初期値 8 割、クエリを広げる台数と段数、転送の玉の数は、見せるために置いた値。ノード・所在・ファイル名は架空。</div>
     </div>
     <aside class="panel-ex" aria-label="解説">
       <h2>いま起きていること</h2>
@@ -147,7 +147,7 @@
     <span class="lg"><span class="dot" style="color:var(--c-conn)"></span>参加</span>
     <span class="lg"><span class="dot" style="color:var(--c-query)"></span>検索元</span>
     <span class="lg"><span class="dot" style="color:var(--c-key)"></span>所在</span>
-    <span class="lg"><span class="dot" style="color:var(--c-relay)"></span>仲介・中継</span>
+    <span class="lg"><span class="dot" style="color:var(--c-relay)"></span>仲介</span>
     <span class="lg"><span class="dot" style="color:var(--c-cache)"></span>要求元・取得</span>
   </div>
   <div class="legend" aria-label="凡例">
@@ -171,11 +171,11 @@
     nat:"#7d8ea0",node:"#c3d2e0",nodeDim:"#5b6b7b",line:"#273441",fg:"#e6edf3",muted:"#93a3b4"};
   const TAGS=["青","赤","緑","黄","紫","橙","空","桃","藍","茜","萌","柿","藤","栗","霞","桜","紺","紅","苔","杏","菫","楓","雪","梅"];
   const PHASES=[
-    {k:"参加",pc:COL.conn,hint:"青＝接続リクエスト。保存済みノードへ TCP でつなぎ、相互の紹介で候補を増やす。中央サーバは無い。"},
+    {k:"参加",pc:COL.conn,hint:"青＝接続。保存してあるノードへつなぎ、紹介で候補を増やす。解析した参加の経路には、中央の登録サーバは見当たらなかった。"},
     {k:"検索",pc:COL.query,hint:"緑＝検索クエリ。隣のノードへ順に広がる。外へ探しに行く向き。"},
-    {k:"所在（キー）",pc:COL.key,hint:"紫＝キー＝ファイルの所在。クエリが来た道を逆にたどって、要求元へ返る。"},
-    {k:"転送",pc:COL.cache,hint:"琥珀＝キャッシュ転送。所在から要求元へ。受け取った側も、以後は所在として配布できる。"},
-    {k:"Port0 の仲介",pc:COL.relay,hint:"赤＝Port0 の仲介。外から接続できない相手へは、仲介ノードが両者に通知し、所在側から外向きに接続させる。"},
+    {k:"所在（キー）",pc:COL.key,hint:"紫＝キー＝ファイルの所在の情報。クエリを受けたノードが、手持ちのキーを足して送り返す。道筋の細部は解析で未確認。"},
+    {k:"転送",pc:COL.cache,hint:"琥珀＝キャッシュ転送。要求元と所在を直接つないで受け渡す。"},
+    {k:"Port0 の仲介",pc:COL.relay,hint:"赤＝Port0 の仲介。外から接続を受けられない相手へは、両方とつながっている仲介ノードが知らせを出し、Port0 の側から外向きに接続させる。"},
   ];
   const kindPhase={conn:0,query:1,key:2,cache:3,relay:4};
   const cv=document.getElementById("cv"), ctx=cv.getContext("2d");
@@ -184,12 +184,12 @@
   let W=0,H=0,DPR=1;
   let nodes=[],nats=[],edges=[],adj=new Map(),packets=[];
   let roles=new Map();
-  let playing=!reduce, demoMode=false, speedMul=1, showLabels=false, busy=6, gained=0, lastEv=0, liveT=0;
+  let blocked=0, unknownStops=0, playing=!reduce, demoMode=false, speedMul=1, showLabels=false, busy=6, gained=0, lastEv=0, liveT=0;
   let timeToNext=0.8, seedN=50;
   let rng=mulberry32(1234);
   const timers=[];
   function clearTimers(){ while(timers.length) clearTimeout(timers.pop()); }
-  function after(ms,fn){ const t=setTimeout(fn, ms/Math.max(0.5,speedMul)); timers.push(t); return t; }
+  function after(ms,fn){ const t=setTimeout(()=>{ const i=timers.indexOf(t); if(i>=0)timers.splice(i,1); fn(); }, ms/Math.max(0.5,speedMul)); timers.push(t); return t; }
 
   function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
   const rint=(n)=>Math.floor(rng()*n), pick=(a)=>a[rint(a.length)], clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
@@ -200,7 +200,7 @@
   function fan(list){ const a=list.slice(); for(let i=a.length-1;i>0;i--){const j=rint(i+1);[a[i],a[j]]=[a[j],a[i]];} return a.slice(0,FAN); }
   function build(n){
     rng=mulberry32(99+n*7+Math.floor(rng()*1000));
-    nodes=[];nats=[];edges=[];adj=new Map();packets=[];roles=new Map();gained=0;seqReset();
+    nodes=[];nats=[];edges=[];adj=new Map();packets=[];roles=new Map();gained=0;unknownStops=0;seqReset();
     // NAT の内側に置く割合（想定値）。家庭の回線を想定し、1 つの NAT に 1〜3 台。
     const behind=Math.max(0,Math.min(n-2,Math.round(n*NAT_RATIO))); const sizes=[]; let left=behind;   // 外のノードは最低 2 台残す
     while(left>0){ const m=Math.min(left,pick([1,2,2,2,3])); sizes.push(m); left-=m; }
@@ -231,7 +231,7 @@
       nodes.push(mkNode(id++,Math.cos(s*ga)*r,Math.sin(s*ga)*r,null)); s++; }
     buildEdges(); layout();
     const nb=nodes.filter(x=>x.nat!=null).length;
-    setEvent("query","配置完了",`${n} ノードのうち ${nb} 台（${Math.round(nb/n*100)}%）が NAT の内側（Port0）。内側同士は直接つながらず、必ず外のノードを介します。`,true);
+    setEvent("query","配置完了",`${n} ノードのうち ${nb} 台（${Math.round(nb/n*100)}%）が NAT の内側（本ツールでは Port0 として描く）。内側同士は直接つなぎません。`,true);
   }
   function mkNode(id,nx,ny,nat){
     const t1=rint(TAGS.length); let t2=rint(TAGS.length); if(t2===t1)t2=(t2+1)%TAGS.length;
@@ -254,6 +254,9 @@
         else if(w>top[deg-1].w){top[deg-1]={id:o.id,w};top.sort((p,q)=>q.w-p.w);} }
       for(const t of top) addE(nd.id,t.id);
     }
+    // 外のノード同士も、近い 2 台とつないでおく（線の張り方は本ツールが決めたもの）
+    for(const nd of pubs){ const near=pubs.filter(o=>o.id!==nd.id).map(o=>({id:o.id,w:affinity(nd,o)})).sort((p,q)=>q.w-p.w).slice(0,2);
+      for(const t of near) addE(nd.id,t.id); }
     const seen=new Set([0]),stack=[0];
     const walk=()=>{while(stack.length){const u=stack.pop();for(const v of adj.get(u))if(!seen.has(v)){seen.add(v);stack.push(v);}}};
     walk();
@@ -280,7 +283,7 @@
 
   function spawn(a,b,color,opt={}){
     const A=nodes[a],B=nodes[b]; if(!A||!B)return null;
-    if(A.port0&&B.port0){ window.__natToNat=(window.__natToNat||0)+1; return null; }   // NAT の内側同士は直接送れない
+    if(A.port0&&B.port0){ blocked++; return null; }   // Port0 同士は直接送らない
     const dist=Math.hypot(A.x-B.x,A.y-B.y), base=reduce?300:160;
     const p={a,b,color,t:0,dur:Math.max(0.28,dist/base)/speedMul,r:opt.r||3.4,onArrive:opt.onArrive||null};
     packets.push(p); if(demoMode) seqAdd(p); return p;
@@ -307,44 +310,45 @@
     if(!q.matched&&nd.keys.has(q.want)){ q.matched=true;
       const path=[to];let c=to;while(c!==q.origin){c=q.parent.get(c);path.push(c);}
       setRole(to,"所在",COL.key,6);
-      setEvent("key",`N${to}`,`N${to} が「${q.want}」を持っていました（所在）。キーを N${q.origin} へ返します。`);
-      chain(path,COL.key,()=>startDownload(q.origin,to,q.want,q.parent)); return; }
+      setEvent("key",`N${to}`,`N${to} が「${q.want}」を持っていました（所在）。キーを足して N${q.origin} へ送り返します。`);
+      chain(path,COL.key,()=>startDownload(q.origin,to,q.want)); return; }
     if(ttl>1) for(const m of fan(adj.get(to).filter(m=>m!==from&&!q.visited.has(m)))) sendQuery(to,m,q,ttl-1);
   }
-  function startDownload(req,holder,want,parent){
-    const reverse=[holder];let c=holder;while(c!==req&&parent.has(c)){c=parent.get(c);reverse.push(c);}
-    if(nodes[holder].port0&&nodes[req].port0){
-      const M=parent.get(holder); if(M!=null) setRole(M,"中継",COL.relay,7); setRole(req,"要求元",COL.cache,6);
-      setEvent("relay",`中継 N${M}`,`N${holder} も N${req} も NAT の内側で、互いに直接つなげません。間にいる外のノードがキャッシュを中継します。`);
-      burst(reverse.slice(),COL.cache,()=>finishDL(req,want)); return; }
-    if(nodes[holder].port0){
-      const M=parent.get(holder); if(M==null||M===req){directTransfer(reverse,req,holder,want);return;}
+  function startDownload(req,holder,want){
+    const H=nodes[holder], R=nodes[req];
+    if(H.port0&&R.port0){   // 解析では、要求元も Port0 なら直接接続の条件を満たさない。その先の受け渡しは未確認なので描かない
+      setRole(req,"要求元",COL.cache,6); setRole(holder,"所在・Port0",COL.key,6);
+      unknownStops++; setEvent("relay","未確認",`N${holder} も N${req} も Port0 で、直接つなぐ条件を満たしません。この場合の受け渡しは解析で確かめていないので、ここで止めます。`); return; }
+    if(H.port0){
+      const M=adj.get(holder).find(m=>!nodes[m].port0&&adj.get(req).includes(m));   // 仲介は、両方と既存のリンクを持つノード
+      if(M==null){ setRole(req,"要求元",COL.cache,6); setRole(holder,"所在・Port0",COL.key,6);
+        setEvent("relay","仲介なし",`N${holder} は Port0 です。この配置には、N${req} と N${holder} の両方とつながっているノードが無いため、ここで止めます。`); return; }
       setRole(M,"仲介",COL.relay,7);setRole(holder,"所在・Port0",COL.key,7);setRole(req,"要求元",COL.cache,7);
-      setEvent("relay",`仲介 N${M}`,`N${holder} は Port0。仲介 N${M} が両者へ通知し、N${holder} 側から外向きに接続させます。`);
+      setEvent("relay",`仲介 N${M}`,`N${holder} は Port0。両方とつながっている仲介 N${M} が知らせを出し、N${holder} の側から外向きに接続させます。`);
       nodes[M].pulse=1;
       spawn(M,holder,COL.relay,{onArrive:()=>spawn(M,req,COL.relay,{onArrive:()=>
         spawn(holder,req,COL.conn,{onArrive:()=>{
           setEvent("cache",`N${holder}→N${req}`,`接続成立。N${holder} から N${req} へ「${want}」を転送します。`);
           burst([holder,req],COL.cache,()=>finishDL(req,want));
         }})})});
-    } else directTransfer(reverse,req,holder,want);
+    } else directTransfer(req,holder,want);
   }
-  function directTransfer(reverse,req,holder,want){
+  function directTransfer(req,holder,want){
     setRole(req,"要求元",COL.cache,6);
-    setEvent("cache",`N${holder}→N${req}`,`N${req} が N${holder} から「${want}」のキャッシュを受け取ります。`);
-    burst(reverse.slice(),COL.cache,()=>finishDL(req,want));
+    setEvent("cache",`N${req}→N${holder}`,`N${req} が N${holder} へ直接つなぎ、「${want}」のキャッシュを受け取ります。`);
+    spawn(req,holder,COL.conn,{onArrive:()=>burst([holder,req],COL.cache,()=>finishDL(req,want))});
   }
-  // 転送は 1 個の玉ではなく、8 個が連なって道筋を流れる。最後の 1 個が着いたら完了
+  // 転送は 1 個の玉ではなく、8 個を連ねて描く（通信量の感じを出すための演出）。最後の 1 個が着いたら完了
   const BURST=8;
   function burst(path,color,onEnd){ for(let i=0;i<BURST;i++) after(i*120,()=>chain(path,color,i===BURST-1?onEnd:null,2.8)); }
   function gainKey(id,want){ const nd=nodes[id]; if(!nd||nd.keys.has(want))return; nd.keys.add(want); nd.gain=1; gained++; }
   function finishDL(req,want){ gainKey(req,want);nodes[req].pulse=1;setRole(req,"取得",COL.cache,5);
-    setEvent("cache","取得完了",`N${req} が「${want}」を取得。以後 N${req} も所在として配布できます。`); }
+    setEvent("cache","取得完了",`N${req} が「${want}」を取得しました。`); }
   function joinNode(){
     if(nodes.length<2)return;
     let a=rint(nodes.length), b=pick(adj.get(a)); if(nodes[b].port0){const t=a;a=b;b=t;}
     nodes[a].pulse=1;setRole(a,"参加",COL.conn,5);
-    setEvent("conn",`N${a}`,`N${a} が保存済みノード N${b} へ接続し、紹介で候補を広げます。`);
+    setEvent("conn",`N${a}`,`N${a} が、保存してあるノード N${b} へ接続し、紹介で候補を広げます。`);
     spawn(a,b,COL.conn,{onArrive:()=>{ adj.get(b).filter(x=>x!==a).slice(0,3)
       .forEach((m,i)=>after(120*i,()=>spawn(b,a,COL.conn,{r:2.6}))); }});
   }
@@ -362,7 +366,7 @@
     const step=(d,fn)=>{ acc+=d; after(acc,fn); };
     step(100,()=>{ let a=rint(nodes.length), b=pick(adj.get(a)); if(nodes[b].port0){const t=a;a=b;b=t;}
       setRole(a,"新規参加",COL.conn,5);
-      setEvent("conn","",`新しいノード N${a} が、保存済みの N${b} へ接続します。中央サーバは無く、手元のノード一覧から始まります。N${b} はほかのノードを紹介します。`);
+      setEvent("conn","",`新しいノード N${a} が、保存してあるノード N${b} へ接続します。入口は手元のノード一覧です（解析した参加の経路には、中央の登録サーバは見当たりませんでした）。N${b} はほかのノードを紹介します。`);
       nodes[a].pulse=1; spawn(a,b,COL.conn,{onArrive:()=>adj.get(b).filter(x=>x!==a).slice(0,3)
         .forEach((m,i)=>after(160*i,()=>spawn(b,a,COL.conn,{r:2.6})))});
     });
@@ -383,12 +387,12 @@
         onArrive:()=>{ const nn=adj.get(nb).find(x=>x!==origin&&!path.includes(x)); if(nn!=null) spawn(nb,nn,COL.query,{r:2.4}); }});
     });
     step(4200,()=>{ setRole(holder,"所在",COL.key,12);nodes[holder].pulse=1;
-      setEvent("key","",`N${holder} が「${want}」を持っていました。「どこにあるか」という情報＝キーを、クエリが来た道を逆にたどって N${origin} へ返します。`);
+      setEvent("key","",`N${holder} が「${want}」を持っていました。「どこにあるか」という情報＝キーを足して、N${origin} へ送り返します（道筋の細部は解析で未確認）。`);
       chain(pathTo(par,holder,origin).reverse(),COL.key,()=>{});
     });
     step(4600,()=>{ setRole(origin,"要求元",COL.cache,8);
-      setEvent("cache","",`所在が分かったので、N${origin} は N${holder} からファイルのキャッシュを受け取ります。受け取った N${origin} も、以後は所在として配布する側になります。`);
-      burst(pathTo(par,holder,origin).reverse(),COL.cache,()=>{gainKey(origin,want);nodes[origin].pulse=1;});
+      setEvent("cache","",`所在が分かったので、N${origin} は N${holder} へ直接つなぎ、ファイルのキャッシュを受け取ります。`);
+      spawn(origin,holder,COL.conn,{onArrive:()=>burst([holder,origin],COL.cache,()=>{gainKey(origin,want);nodes[origin].pulse=1;})});
     });
     step(5200,()=>{ stagePort0(true); });
     step(11500,()=>{
@@ -422,7 +426,7 @@
   }
 
   // ---- シーケンス図（解説デモと Port0 のデモの流れを記録する） ----
-  const SEQLBL={}; let seq={actors:[],rows:[],phase:-1,roleOf:new Map()};
+  let seq={actors:[],rows:[],phase:-1,roleOf:new Map()};
   function seqReset(){ seq={actors:[],rows:[],phase:-1,roleOf:new Map()}; }
   function seqPhase(ph){ if(seq.lock||seq.phase===ph)return; seq.phase=ph; seq.rows.push({div:true,ph}); }
   function seqAdd(p){
@@ -435,7 +439,7 @@
   }
   function seqLabel(m){ const c=m.color;
     const base=c===COL.query?"検索クエリ":c===COL.key?"キー（所在）":c===COL.relay?"仲介の通知":
-      c===COL.cache?"キャッシュ転送":(m.p&&m.p.r<3||m.small)?"ノードの紹介":"接続";
+      c===COL.cache?"キャッシュ転送":(m.p&&m.p.r<3)?"ノードの紹介":"接続";
     return base+(m.n>1?" ×"+m.n:""); }
   const sq=document.getElementById("sq"), sx=sq.getContext("2d"); let SW=0,SH=0, view="net";
   function resizeSeq(){ const r=sq.getBoundingClientRect(); SW=r.width;SH=r.height; const d=Math.min(2,window.devicePixelRatio||1);
@@ -614,7 +618,7 @@
 
   const liveEl=$("live"); const LIVE=[["conn","接続"],["query","検索クエリ"],["key","キー"],["cache","転送"],["relay","仲介"]];
   function updateLive(){ const c={}; for(const p of packets) c[p.color]=(c[p.color]||0)+1;
-    liveEl.innerHTML=LIVE.map(([k,l])=>`<span style="color:${COL[k]}">${l}<b>${c[COL[k]]||0}</b></span>`).join("")+`<span>取得の累計<b>${gained}</b></span>`; }
+    liveEl.innerHTML=LIVE.map(([k,l])=>`<span style="color:${COL[k]}">${l}<b>${c[COL[k]]||0}</b></span>`).join("")+`<span>取得の累計<b>${gained}</b></span><span>未確認で止めた<b>${unknownStops}</b></span>`; }
   function resize(){ if(cv.hidden)return; DPR=Math.min(2,window.devicePixelRatio||1);
     const r=cv.getBoundingClientRect();W=r.width;H=r.height;
     cv.width=Math.round(W*DPR);cv.height=Math.round(H*DPR);ctx.setTransform(DPR,0,0,DPR,0,0);layout(); }
@@ -649,7 +653,6 @@
   $("tabNet").onclick=()=>setView("net"); $("tabSeq").onclick=()=>setView("seq");
   if(reduce) setPlay(false);
   build(seedN);resize();setPlay(playing);requestAnimationFrame(frame);
-  window.__wna={runDemo,stagePort0};
 })();
 </script>
 </body>

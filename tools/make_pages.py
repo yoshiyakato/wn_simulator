@@ -9,8 +9,9 @@ doc = f"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Winny 伝搬シミュレータ</title>
-<meta name="description" content="合成データで、P2P ネットワークへの参加・検索・キャッシュ転送・Port0 の仲介の流れを見せる模擬。実ネットワークには接続しない。">
+<title>Winny トラフィックパターン可視化ツール</title>
+<link rel="icon" href="data:,">
+<meta name="description" content="合成データで、P2P ネットワークへの参加・検索・キャッシュ転送・Port0 の仲介の流れを描く模擬。実ネットワークには接続しない。Winny 本体でも互換クライアントでもない。">
 {src[a:b]}
 </head>
 <body>
