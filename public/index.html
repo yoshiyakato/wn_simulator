@@ -446,7 +446,7 @@
     sq.width=Math.round(SW*d);sq.height=Math.round(SH*d);sx.setTransform(d,0,0,d,0,0); }
   function drawSeq(){
     const c=sx; c.clearRect(0,0,SW,SH);
-    const top=96, bot=SH-58, n=seq.actors.length;
+    const top=96, bot=SH-(SW<520?96:70), n=seq.actors.length;
     c.textAlign="center"; c.textBaseline="middle";
     if(!n){ c.fillStyle=COL.muted; c.font="13px -apple-system, 'Noto Sans JP', sans-serif";
       c.fillText("「解説デモ」か「Port0 のデモ」を押すと、やり取りが上から順に描かれます。",SW/2,SH/2); return; }
@@ -483,7 +483,9 @@
   function roundRectOn(c,x,y,w,h,r){c.beginPath();c.moveTo(x+r,y);c.arcTo(x+w,y,x+w,y+h,r);c.arcTo(x+w,y+h,x,y+h,r);c.arcTo(x,y+h,x,y,r);c.arcTo(x,y,x+w,y,r);c.closePath();}
   function setView(v){ view=v; cv.hidden=v!=="net"; sq.hidden=v!=="seq";
     document.getElementById("tabNet").setAttribute("aria-selected",v==="net"); document.getElementById("tabSeq").setAttribute("aria-selected",v==="seq");
-    document.querySelector(".scope").style.visibility=v==="net"?"visible":"hidden";
+    document.getElementById("spin").hidden=v!=="net";
+    const sc=document.querySelector(".scope"); if(!sc.dataset.net) sc.dataset.net=sc.innerHTML;
+    sc.innerHTML=v==="net"?sc.dataset.net:"● 上から下へ時間が進みます。縦の線が 1 台のノード、矢印が 1 回のやり取りで、色は下の凡例と同じです。「解説デモ」と「Port0 のデモ」の流れを記録します。";
     if(v==="seq") resizeSeq(); else resize(); }
 
   // ---- 表示 ----
