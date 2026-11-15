@@ -1,0 +1,656 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Winny 伝搬シミュレータ</title>
+<meta name="description" content="合成データで、P2P ネットワークへの参加・検索・キャッシュ転送・Port0 の仲介の流れを見せる模擬。実ネットワークには接続しない。">
+<style>
+  /* レイアウト: 上=操作、中=キャンバス＋右の解説パネル、下=凡例とイベント。単一ダーク（ネットワーク監視画面の世界観） */
+  :root{
+    --bg:#0d1520; --panel:#161f2b; --panel2:#1b2733; --edge:#26323f; --line:#2c3a49;
+    --fg:#e6edf3; --muted:#93a3b4; --faint:#5e6e7e;
+    --c-conn:#5cc8ff; --c-query:#3ddc97; --c-key:#b79cff; --c-cache:#f2b134; --c-relay:#f0605d;
+    --nat:#7d8ea0;
+    color-scheme:dark;
+    --gutL:max(14px, env(safe-area-inset-left, 0px));
+    --gutR:max(14px, env(safe-area-inset-right, 0px));
+    --mono:ui-monospace,"DejaVu Sans Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,"Hiragino Kaku Gothic ProN","Noto Sans JP",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);
+    display:flex;flex-direction:column;overflow:hidden}
+  .wrap{display:flex;flex-direction:column;height:100%;
+    padding-left:var(--gutL);padding-right:var(--gutR)}
+  header{display:flex;flex-wrap:wrap;align-items:baseline;gap:.3rem .9rem;padding-block:.55rem .2rem}
+  h1{font-size:1.02rem;margin:0;font-weight:700;letter-spacing:.02em}
+  .sub{font-size:.72rem;color:var(--muted);line-height:1.3}
+  .tag{font-family:var(--mono);color:var(--c-query);font-size:.7rem}
+  .toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:.4rem;padding-block:.3rem .45rem}
+  button{font-family:var(--sans);font-size:.78rem;color:var(--fg);background:var(--panel2);
+    border:1px solid var(--edge);border-radius:.45rem;padding:.4rem .7rem;cursor:pointer;line-height:1;
+    transition:border-color .15s,background .15s}
+  button:hover{border-color:var(--c-query)}
+  button:focus-visible{outline:2px solid var(--c-query);outline-offset:2px}
+  button.primary{background:#10311f;border-color:#2f6b47;color:#bdeccf}
+  button.demo{background:#20283a;border-color:#4a5c86;color:#cdd8f2}
+  button[aria-pressed="true"]{border-color:var(--c-query);color:var(--c-query)}
+  .ctl{display:flex;align-items:center;gap:.4rem;font-size:.75rem;color:var(--muted);
+    background:var(--panel);border:1px solid var(--edge);border-radius:.45rem;padding:.3rem .55rem}
+  .ctl input[type=range]{accent-color:var(--c-query);width:6.5rem;max-width:34vw}
+  .ctl b{color:var(--fg);font-family:var(--mono);font-variant-numeric:tabular-nums;min-width:2ch;text-align:right}
+
+  .stage{flex:1 1 auto;min-height:0;display:flex;gap:.6rem}
+  .canvas-box{position:relative;flex:1 1 auto;min-width:0;min-height:300px;border:1px solid var(--edge);
+    border-radius:.6rem;overflow:hidden;background:radial-gradient(120% 120% at 50% 0%, #121c28 0%, var(--bg) 70%)}
+  canvas{display:block;width:100%;height:100%;touch-action:manipulation}
+  .scope{position:absolute;left:.6rem;bottom:.5rem;right:.6rem;font-size:.64rem;color:var(--faint);
+    pointer-events:none;line-height:1.35}
+
+  .panel-ex{flex:0 0 280px;max-width:46vw;display:flex;flex-direction:column;gap:.55rem;
+    border:1px solid var(--edge);border-radius:.6rem;background:var(--panel);padding:.7rem .75rem;overflow:auto}
+  .panel-ex h2{font-size:.72rem;margin:0;color:var(--muted);font-weight:600;letter-spacing:.04em}
+  .pipe{display:flex;flex-direction:column;gap:.3rem}
+  .pstep{display:flex;align-items:center;gap:.5rem;font-size:.76rem;color:var(--faint);
+    padding:.28rem .4rem;border-radius:.4rem;border:1px solid transparent}
+  .pstep .pn{width:1.25rem;height:1.25rem;flex:0 0 auto;border-radius:50%;border:1.5px solid currentColor;
+    display:grid;place-items:center;font-family:var(--mono);font-size:.68rem}
+  .pstep.on{color:var(--fg);background:#101a26;border-color:var(--edge)}
+  .pstep.on .pn,.pstep.on .ptxt{color:var(--pc)}
+  .now{padding:.55rem .6rem;border-radius:.5rem;background:var(--panel2);border:1px solid var(--edge)}
+  .now .nt{font-size:.95rem;font-weight:700;line-height:1.3;color:var(--ac,var(--fg))}
+  .now .nd{font-size:.8rem;color:var(--fg);line-height:1.55;margin-top:.35rem}
+  .hint{font-size:.74rem;line-height:1.5;color:var(--muted);border-left:3px solid var(--ac,var(--edge));padding:.1rem 0 .1rem .55rem}
+
+  .legend{display:flex;flex-wrap:wrap;gap:.3rem .85rem;padding-block:.45rem .2rem;font-size:.72rem}
+  .lg{display:flex;align-items:center;gap:.38rem;color:var(--muted)}
+  .dot{width:.68rem;height:.68rem;border-radius:50%;flex:0 0 auto;background:currentColor;box-shadow:0 0 7px currentColor}
+  .ring{width:.78rem;height:.78rem;border-radius:50%;border:2px dashed var(--c-relay);flex:0 0 auto}
+  .fold{width:.8rem;height:.56rem;border-radius:.1rem;background:var(--muted);position:relative;flex:0 0 auto}
+  .fold::before{content:"";position:absolute;left:0;top:-.14rem;width:.36rem;height:.16rem;background:var(--muted);border-radius:.08rem .08rem 0 0}
+  .live{display:grid;grid-template-columns:1fr 1fr;gap:.3rem .7rem;margin:.7rem 0;font-size:.74rem;color:var(--muted)}
+  .live span{display:flex;justify-content:space-between;gap:.4rem;border-bottom:1px solid var(--line,#273441);padding:.12rem 0}
+  .live b{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .tabs{position:absolute;left:.5rem;top:.5rem;z-index:2;display:flex;gap:.25rem}
+  .tabs button{font-size:.72rem;padding:.34rem .6rem;background:rgba(13,21,32,.85)}
+  .tabs .spin{margin-left:.5rem}
+  .tabs button[aria-selected="true"]{border-color:var(--c-query);color:var(--c-query)}
+  canvas[hidden]{display:none}
+  .natchip{width:.88rem;height:.68rem;border-radius:.2rem;border:1px dashed var(--nat);flex:0 0 auto}
+  .log{display:flex;align-items:center;gap:.5rem;padding-block:.25rem .5rem;font-size:.77rem;min-height:1.7rem}
+  .log .badge{font-family:var(--mono);font-size:.67rem;padding:.12rem .4rem;border-radius:.3rem;border:1px solid currentColor;flex:0 0 auto}
+  .log .msg{color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  @media (max-width:720px){
+    body{overflow:auto}
+    .wrap{height:auto;min-height:100%}
+    .stage{flex-direction:column;flex:0 0 auto}
+    .canvas-box{min-height:470px;flex:0 0 470px}
+    .panel-ex{flex:0 0 auto;max-width:none}
+    .pipe{flex-direction:row;flex-wrap:wrap}
+    .sub.wide{display:none}
+  }
+  @media (max-width:560px){ .ctl input[type=range]{width:4.6rem} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Winny 伝搬シミュレータ</h1>
+    <span class="sub"><span class="tag">WNA</span> 参加・検索・キャッシュ・Port0 仲介の流れを可視化</span>
+    <span class="sub wide" style="margin-left:auto">合成データによる模擬。実ネットワークには接続していない。</span>
+  </header>
+
+  <div class="toolbar" role="group" aria-label="操作">
+    <button id="demo" class="demo">▷ 解説デモ</button>
+    <button id="play" class="primary" aria-pressed="true">■ 停止</button>
+    <button id="query">クエリを出す</button>
+    <button id="port0">Port0 のデモ</button>
+    <button id="join">ノード参加</button>
+    <button id="reset">配置し直す</button>
+    <label class="ctl">ノード数 <input id="nodes" type="range" min="8" max="2000" step="1" value="50"><b id="nodesv">50</b></label>
+    <label class="ctl">NAT の内側 <input id="natr" type="range" min="0" max="98" step="1" value="80"><b id="natrv">80%</b></label>
+    <label class="ctl">並列度 <input id="busy" type="range" min="1" max="10" step="1" value="6"><b id="busyv">6</b></label>
+    <label class="ctl">速さ <input id="speed" type="range" min="0.3" max="10" step="0.1" value="1"><b id="speedv">1.0×</b></label>
+    <button id="labels" aria-pressed="false">番号</button>
+  </div>
+
+  <div class="stage">
+    <div class="canvas-box">
+      <div class="tabs" role="tablist" aria-label="表示の切り替え">
+        <button id="tabNet" role="tab" aria-selected="true">ネットワーク図</button>
+        <button id="tabSeq" role="tab" aria-selected="false">シーケンス図</button>
+        <button id="spin" class="spin">回転を止める</button>
+      </div>
+      <canvas id="cv" aria-label="Winny ネットワークの伝搬図"></canvas>
+      <canvas id="sq" hidden aria-label="解説デモのシーケンス図"></canvas>
+      <div class="scope">● 図はドラッグで回せる（ドラッグすると自動回転は止まる）。上の層＝外のノード、地面＝NAT の内側。　ノード＝参加者　破線の輪＝NAT（内側の割合はバーで変更。初期値の 8 割は想定）　赤破線＝Port0＝NAT の内側のノード。外から接続を受けられず、自分から外のノードへつなぐだけなので、NAT の内側同士は直接つながらない。ポートを開けたノードは外のノードとして描いている。フォルダの数字＝手元のファイル数。所在やファイル名は架空の符号。</div>
+    </div>
+    <aside class="panel-ex" aria-label="解説">
+      <h2>いま起きていること</h2>
+      <div class="pipe" id="pipe"></div>
+      <div class="now">
+        <div class="nt" id="nowTitle">待機中</div>
+        <div class="nd" id="nowDesc">「解説デモ」を押すと、1 つのファイルが見つかって届くまでを順に見せます。「再生」は自由に動き続けます。</div>
+      </div>
+      <div class="live" id="live" aria-label="同時に動いている数"></div>
+      <div class="hint" id="hint">緑＝検索クエリ、紫＝キー（所在）、琥珀＝転送、青＝接続、赤＝Port0 の仲介。色がどこからどこへ動くかを見てください。</div>
+    </aside>
+  </div>
+
+  <div class="legend" aria-label="ノードの役割の色">
+    <span class="lg" style="color:var(--muted)">ノードの色＝役割</span>
+    <span class="lg"><span class="dot" style="color:#eef4fa"></span>外のノード</span>
+    <span class="lg"><span class="dot" style="color:#7d8ea0"></span>NAT の内側</span>
+    <span class="lg"><span class="dot" style="color:var(--c-conn)"></span>参加</span>
+    <span class="lg"><span class="dot" style="color:var(--c-query)"></span>検索元</span>
+    <span class="lg"><span class="dot" style="color:var(--c-key)"></span>所在</span>
+    <span class="lg"><span class="dot" style="color:var(--c-relay)"></span>仲介・中継</span>
+    <span class="lg"><span class="dot" style="color:var(--c-cache)"></span>要求元・取得</span>
+  </div>
+  <div class="legend" aria-label="凡例">
+    <span class="lg" style="color:var(--muted)">パケットの色</span>
+    <span class="lg"><span class="dot" style="color:var(--c-conn)"></span>接続リクエスト</span>
+    <span class="lg"><span class="dot" style="color:var(--c-query)"></span>検索クエリ</span>
+    <span class="lg"><span class="dot" style="color:var(--c-key)"></span>キー（所在）</span>
+    <span class="lg"><span class="dot" style="color:var(--c-cache)"></span>キャッシュ転送</span>
+    <span class="lg"><span class="dot" style="color:var(--c-relay)"></span>Port0 の仲介</span>
+    <span class="lg"><span class="natchip"></span>NAT</span>
+    <span class="lg"><span class="ring"></span>Port0 ノード（NAT の内側）</span>
+    <span class="lg"><span class="fold"></span>手元のファイル数</span>
+  </div>
+
+  <div class="log"><span id="badge" class="badge" style="color:var(--c-query)">待機</span><span id="msg" class="msg">再生すると、ノードが検索クエリを出し、キーが返り、転送が始まります。</span></div>
+</div>
+<script>
+"use strict";
+(function(){
+  const COL={conn:"#5cc8ff",query:"#3ddc97",key:"#b79cff",cache:"#f2b134",relay:"#f0605d",
+    nat:"#7d8ea0",node:"#c3d2e0",nodeDim:"#5b6b7b",line:"#273441",fg:"#e6edf3",muted:"#93a3b4"};
+  const TAGS=["青","赤","緑","黄","紫","橙","空","桃","藍","茜","萌","柿","藤","栗","霞","桜","紺","紅","苔","杏","菫","楓","雪","梅"];
+  const PHASES=[
+    {k:"参加",pc:COL.conn,hint:"青＝接続リクエスト。保存済みノードへ TCP でつなぎ、相互の紹介で候補を増やす。中央サーバは無い。"},
+    {k:"検索",pc:COL.query,hint:"緑＝検索クエリ。隣のノードへ順に広がる。外へ探しに行く向き。"},
+    {k:"所在（キー）",pc:COL.key,hint:"紫＝キー＝ファイルの所在。クエリが来た道を逆にたどって、要求元へ返る。"},
+    {k:"転送",pc:COL.cache,hint:"琥珀＝キャッシュ転送。所在から要求元へ。受け取った側も、以後は所在として配布できる。"},
+    {k:"Port0 の仲介",pc:COL.relay,hint:"赤＝Port0 の仲介。外から接続できない相手へは、仲介ノードが両者に通知し、所在側から外向きに接続させる。"},
+  ];
+  const kindPhase={conn:0,query:1,key:2,cache:3,relay:4};
+  const cv=document.getElementById("cv"), ctx=cv.getContext("2d");
+  const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  let W=0,H=0,DPR=1;
+  let nodes=[],nats=[],edges=[],adj=new Map(),packets=[];
+  let roles=new Map();
+  let playing=!reduce, demoMode=false, speedMul=1, showLabels=false, busy=6, gained=0, lastEv=0, liveT=0;
+  let timeToNext=0.8, seedN=50;
+  let rng=mulberry32(1234);
+  const timers=[];
+  function clearTimers(){ while(timers.length) clearTimeout(timers.pop()); }
+  function after(ms,fn){ const t=setTimeout(fn, ms/Math.max(0.5,speedMul)); timers.push(t); return t; }
+
+  function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+  const rint=(n)=>Math.floor(rng()*n), pick=(a)=>a[rint(a.length)], clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
+
+  let NAT_RATIO=0.8, SC=1;
+  const nr=(nd)=>Math.max(1.4,(6+Math.min(4,nd.speed*1.6))*SC*(nd.ps||1)*clamp(SS/300,0.45,1.1));
+  const FAN=6;   // 1 ノードが一度にクエリを広げる相手の上限
+  function fan(list){ const a=list.slice(); for(let i=a.length-1;i>0;i--){const j=rint(i+1);[a[i],a[j]]=[a[j],a[i]];} return a.slice(0,FAN); }
+  function build(n){
+    rng=mulberry32(99+n*7+Math.floor(rng()*1000));
+    nodes=[];nats=[];edges=[];adj=new Map();packets=[];roles=new Map();gained=0;seqReset();
+    // NAT の内側に置く割合（想定値）。家庭の回線を想定し、1 つの NAT に 1〜3 台。
+    const behind=Math.max(0,Math.min(n-2,Math.round(n*NAT_RATIO))); const sizes=[]; let left=behind;   // 外のノードは最低 2 台残す
+    while(left>0){ const m=Math.min(left,pick([1,2,2,2,3])); sizes.push(m); left-=m; }
+    // NAT は外周から内へ、同心の輪に並べる。入り切る大きさになるまで粒を小さくする
+    const numNats=sizes.length; SC=clamp(Math.sqrt(50/n),0.1,1);
+    let radii=[],caps=[]; const sum=(v)=>v.reduce((x,y)=>x+y,0);
+    for(let guard=0;guard<80;guard++){
+      radii=[];caps=[]; const dr=0.46*SC, tang=0.4*SC;
+      for(let r=0.9;r>=0.34&&radii.length<60;r-=dr){ radii.push(r); caps.push(Math.max(1,Math.floor(2*Math.PI*r/tang))); if(sum(caps)>=numNats)break; }
+      if(sum(caps)>=numNats||numNats===0)break; SC*=0.93;
+    }
+    if(!radii.length){radii=[0.87];caps=[1];}
+    const nR=radii.length, capT=sum(caps)||1, cnts=caps.map(c=>Math.min(c,Math.floor(numNats*c/capT)));
+    let rest=numNats-sum(cnts); for(let k=0,g=0;rest>0&&g<1e6;k=(k+1)%nR,g++){ if(cnts[k]<caps[k]||g>nR*4){cnts[k]++;rest--;} }
+    const rIn=radii[nR-1];
+    let id=0, i=0; const natIds=[];
+    for(let k=0;k<nR;k++) for(let j=0;j<cnts[k];j++,i++){
+      const rad=radii[k], ang=-Math.PI/2+(j+(k%2?0.5:0))*(2*Math.PI/cnts[k]);
+      const ax=Math.cos(ang)*rad, ay=Math.sin(ang)*rad, tx=-Math.sin(ang), ty=Math.cos(ang);
+      const na={id:i,ax,ay,members:[],ip:`203.0.113.${1+((i*11+rint(9))%250)}`}; nats.push(na);
+      for(let m=0;m<sizes[i];m++){ const off=m-(sizes[i]-1)/2;
+        const nd=mkNode(id++,ax+tx*off*0.1*SC,ay+ty*off*0.1*SC,i); na.members.push(nd.id); nodes.push(nd); natIds.push(nd.id); }
+    }
+    // NAT の内側のノードは外から接続を受けられない＝Port0。内側でもポートを開けたノードは、外のノードとして描く。
+    natIds.forEach(x=>nodes[x].port0=true);
+    const pub=n-id, ga=Math.PI*(3-Math.sqrt(5)), pr=numNats<=9?0.5:Math.max(0.12,rIn-0.16); let s=0;
+    while(id<n){ const t=(s+0.5)/pub; const r=0.05+pr*Math.sqrt(t);
+      nodes.push(mkNode(id++,Math.cos(s*ga)*r,Math.sin(s*ga)*r,null)); s++; }
+    buildEdges(); layout();
+    const nb=nodes.filter(x=>x.nat!=null).length;
+    setEvent("query","配置完了",`${n} ノードのうち ${nb} 台（${Math.round(nb/n*100)}%）が NAT の内側（Port0）。内側同士は直接つながらず、必ず外のノードを介します。`,true);
+  }
+  function mkNode(id,nx,ny,nat){
+    const t1=rint(TAGS.length); let t2=rint(TAGS.length); if(t2===t1)t2=(t2+1)%TAGS.length;
+    const tags=[TAGS[t1],TAGS[t2]];
+    return {id,nx:clamp(nx,-0.96,0.96),ny:clamp(ny,-0.96,0.96),nat,port0:false,
+      tags,keys:new Set(tags),gain:0,speed:0.3+rng()*1.7,x:0,y:0,pulse:0};
+  }
+  function affinity(a,b){let s=0;for(const t of a.tags)if(b.tags.includes(t))s+=2;
+    s+=1/(0.05+Math.hypot(a.nx-b.nx,a.ny-b.ny));return s;}
+  function buildEdges(){
+    const key=(a,b)=>a<b?a+"_"+b:b+"_"+a,set=new Set();
+    adj=new Map();nodes.forEach(nd=>adj.set(nd.id,[]));
+    const addE=(a,b)=>{if(a===b)return;if(nodes[a].port0&&nodes[b].port0)return;const k=key(a,b);if(set.has(k))return;set.add(k);
+      edges.push({a,b});adj.get(a).push(b);adj.get(b).push(a);};
+    const pubs=nodes.filter(o=>!o.port0);
+    for(const nd of nodes){
+      const pool=nd.port0?pubs:nodes, deg=2+rint(2), top=[];   // 内側のノードは外のノードだけが相手
+      for(const o of pool){ if(o.id===nd.id)continue; const w=affinity(nd,o);
+        if(top.length<deg){top.push({id:o.id,w});top.sort((p,q)=>q.w-p.w);}
+        else if(w>top[deg-1].w){top[deg-1]={id:o.id,w};top.sort((p,q)=>q.w-p.w);} }
+      for(const t of top) addE(nd.id,t.id);
+    }
+    const seen=new Set([0]),stack=[0];
+    const walk=()=>{while(stack.length){const u=stack.pop();for(const v of adj.get(u))if(!seen.has(v)){seen.add(v);stack.push(v);}}};
+    walk();
+    for(const nd of nodes) if(!seen.has(nd.id)){ let best=-1,bw=-1;
+      for(const o of (nd.port0?pubs:nodes)) if(seen.has(o.id)&&!(nd.port0&&o.port0)){const w=affinity(nd,o);if(w>bw){bw=w;best=o.id;}}
+      if(best>=0){addE(nd.id,best);seen.add(nd.id);stack.push(nd.id);walk();} }
+  }
+  // ---- 立体表示: 地面に NAT の内側のノード、上の層に外のノード。視点はドラッグで回せる ----
+  const cam={yaw:0.5,pitch:0.62,auto:true,drag:false}, PUBZ=0.34, CAMD=3.4;
+  let SS=300, CX=0, CY=0;
+  function proj(X,Y,Z){ const c=Math.cos(cam.yaw), sn=Math.sin(cam.yaw), x1=X*c-Y*sn, y1=X*sn+Y*c;
+    const sp=Math.sin(cam.pitch), cp=Math.cos(cam.pitch), v=y1*sp+Z*cp, dz=y1*cp-Z*sp, k=CAMD/(CAMD+dz);
+    return {x:CX+x1*k*SS, y:CY-v*k*SS, k, d:dz}; }
+  const nz=(nd)=>nd.nat==null?PUBZ:0;
+  function layout(){
+    const nar=W<520, bot=nar?120:74; SS=Math.min(W*0.36,(H-48-bot)*0.6); CX=W/2; CY=48+(H-48-bot)*0.53;
+    for(const nd of nodes){ const q=proj(nd.nx,nd.ny,nz(nd)); nd.x=q.x;nd.y=q.y;nd.ps=q.k;nd.d=q.d;
+      if(nd.nat==null){ const g=proj(nd.nx,nd.ny,0); nd.gx=g.x;nd.gy=g.y; } }
+    for(const na of nats){ let rad=0; for(const mid of na.members){const m=nodes[mid];rad=Math.max(rad,Math.hypot(m.nx-na.ax,m.ny-na.ay));}
+      rad+=0.065*SC; const pts=[], NP=nats.length>150?8:18; let low=null;
+      for(let i=0;i<NP;i++){ const a=i/NP*Math.PI*2, q=proj(na.ax+Math.cos(a)*rad,na.ay+Math.sin(a)*rad,0); pts.push(q); if(!low||q.y>low.y)low=q; }
+      na.ring=pts; na.low=low; }
+  }
+
+  function spawn(a,b,color,opt={}){
+    const A=nodes[a],B=nodes[b]; if(!A||!B)return null;
+    if(A.port0&&B.port0){ window.__natToNat=(window.__natToNat||0)+1; return null; }   // NAT の内側同士は直接送れない
+    const dist=Math.hypot(A.x-B.x,A.y-B.y), base=reduce?300:160;
+    const p={a,b,color,t:0,dur:Math.max(0.28,dist/base)/speedMul,r:opt.r||3.4,onArrive:opt.onArrive||null};
+    packets.push(p); if(demoMode) seqAdd(p); return p;
+  }
+  function chain(path,color,onEnd,r){ let i=0; const hop=()=>{ if(i>=path.length-1){onEnd&&onEnd();return;}
+    const a=path[i],b=path[i+1];i++;nodes[b].pulse=1;spawn(a,b,color,{onArrive:hop,r}); }; hop(); }
+  function setRole(id,text,color,ttl){ roles.set(id,{text,color,ttl:ttl||4}); if(demoMode) seq.roleOf.set(id,{text,color}); }
+
+  // ---- 自由運転 ----
+  function issueQuery(origin){
+    if(nodes.length<2)return;
+    origin=origin!=null?origin:rint(nodes.length);
+    const o=nodes[origin];
+    const want=pick(TAGS.filter(t=>!o.keys.has(t)))||pick(TAGS);
+    const q={want,origin,visited:new Set([origin]),parent:new Map(),matched:false};
+    o.pulse=1; setRole(origin,"検索元",COL.query,6);
+    setEvent("query",`N${origin}`,`N${origin} が「${want}」を検索。クエリが隣のノードへ広がります。`);
+    for(const m of fan(adj.get(origin))) sendQuery(origin,m,q,3);
+  }
+  function sendQuery(f,t,q,ttl){ spawn(f,t,COL.query,{onArrive:()=>onQuery(f,t,q,ttl)}); }
+  function onQuery(from,to,q,ttl){
+    const nd=nodes[to]; if(!nd||q.visited.has(to))return;
+    q.visited.add(to);q.parent.set(to,from);nd.pulse=1;
+    if(!q.matched&&nd.keys.has(q.want)){ q.matched=true;
+      const path=[to];let c=to;while(c!==q.origin){c=q.parent.get(c);path.push(c);}
+      setRole(to,"所在",COL.key,6);
+      setEvent("key",`N${to}`,`N${to} が「${q.want}」を持っていました（所在）。キーを N${q.origin} へ返します。`);
+      chain(path,COL.key,()=>startDownload(q.origin,to,q.want,q.parent)); return; }
+    if(ttl>1) for(const m of fan(adj.get(to).filter(m=>m!==from&&!q.visited.has(m)))) sendQuery(to,m,q,ttl-1);
+  }
+  function startDownload(req,holder,want,parent){
+    const reverse=[holder];let c=holder;while(c!==req&&parent.has(c)){c=parent.get(c);reverse.push(c);}
+    if(nodes[holder].port0&&nodes[req].port0){
+      const M=parent.get(holder); if(M!=null) setRole(M,"中継",COL.relay,7); setRole(req,"要求元",COL.cache,6);
+      setEvent("relay",`中継 N${M}`,`N${holder} も N${req} も NAT の内側で、互いに直接つなげません。間にいる外のノードがキャッシュを中継します。`);
+      burst(reverse.slice(),COL.cache,()=>finishDL(req,want)); return; }
+    if(nodes[holder].port0){
+      const M=parent.get(holder); if(M==null||M===req){directTransfer(reverse,req,holder,want);return;}
+      setRole(M,"仲介",COL.relay,7);setRole(holder,"所在・Port0",COL.key,7);setRole(req,"要求元",COL.cache,7);
+      setEvent("relay",`仲介 N${M}`,`N${holder} は Port0。仲介 N${M} が両者へ通知し、N${holder} 側から外向きに接続させます。`);
+      nodes[M].pulse=1;
+      spawn(M,holder,COL.relay,{onArrive:()=>spawn(M,req,COL.relay,{onArrive:()=>
+        spawn(holder,req,COL.conn,{onArrive:()=>{
+          setEvent("cache",`N${holder}→N${req}`,`接続成立。N${holder} から N${req} へ「${want}」を転送します。`);
+          burst([holder,req],COL.cache,()=>finishDL(req,want));
+        }})})});
+    } else directTransfer(reverse,req,holder,want);
+  }
+  function directTransfer(reverse,req,holder,want){
+    setRole(req,"要求元",COL.cache,6);
+    setEvent("cache",`N${holder}→N${req}`,`N${req} が N${holder} から「${want}」のキャッシュを受け取ります。`);
+    burst(reverse.slice(),COL.cache,()=>finishDL(req,want));
+  }
+  // 転送は 1 個の玉ではなく、8 個が連なって道筋を流れる。最後の 1 個が着いたら完了
+  const BURST=8;
+  function burst(path,color,onEnd){ for(let i=0;i<BURST;i++) after(i*120,()=>chain(path,color,i===BURST-1?onEnd:null,2.8)); }
+  function gainKey(id,want){ const nd=nodes[id]; if(!nd||nd.keys.has(want))return; nd.keys.add(want); nd.gain=1; gained++; }
+  function finishDL(req,want){ gainKey(req,want);nodes[req].pulse=1;setRole(req,"取得",COL.cache,5);
+    setEvent("cache","取得完了",`N${req} が「${want}」を取得。以後 N${req} も所在として配布できます。`); }
+  function joinNode(){
+    if(nodes.length<2)return;
+    let a=rint(nodes.length), b=pick(adj.get(a)); if(nodes[b].port0){const t=a;a=b;b=t;}
+    nodes[a].pulse=1;setRole(a,"参加",COL.conn,5);
+    setEvent("conn",`N${a}`,`N${a} が保存済みノード N${b} へ接続し、紹介で候補を広げます。`);
+    spawn(a,b,COL.conn,{onArrive:()=>{ adj.get(b).filter(x=>x!==a).slice(0,3)
+      .forEach((m,i)=>after(120*i,()=>spawn(b,a,COL.conn,{r:2.6}))); }});
+  }
+
+  // ---- 解説デモ ----
+  function bfs(src){ const par=new Map(),dist=new Map([[src,0]]),q=[src];
+    while(q.length){const u=q.shift();for(const v of adj.get(u))if(!dist.has(v)){dist.set(v,dist.get(u)+1);par.set(v,u);q.push(v);}}
+    return {par,dist}; }
+  function pathTo(par,t,s){ const p=[t];let c=t;while(c!==s){c=par.get(c);if(c==null)break;p.push(c);} return p.reverse(); }
+  function stopDemo(){ clearTimers(); demoMode=false; }
+
+  function runDemo(){
+    stopDemo(); demoMode=true; setPlay(false); packets=[]; roles=new Map(); seqReset();
+    let origin,holder,par,want,acc=0;
+    const step=(d,fn)=>{ acc+=d; after(acc,fn); };
+    step(100,()=>{ let a=rint(nodes.length), b=pick(adj.get(a)); if(nodes[b].port0){const t=a;a=b;b=t;}
+      setRole(a,"新規参加",COL.conn,5);
+      setEvent("conn","",`新しいノード N${a} が、保存済みの N${b} へ接続します。中央サーバは無く、手元のノード一覧から始まります。N${b} はほかのノードを紹介します。`);
+      nodes[a].pulse=1; spawn(a,b,COL.conn,{onArrive:()=>adj.get(b).filter(x=>x!==a).slice(0,3)
+        .forEach((m,i)=>after(160*i,()=>spawn(b,a,COL.conn,{r:2.6})))});
+    });
+    step(4200,()=>{
+      for(let tries=0;tries<30;tries++){
+        origin=rint(nodes.length); const bf=bfs(origin); par=bf.par;
+        const cand=nodes.filter(nd=>nd.id!==origin&&!nd.port0&&bf.dist.get(nd.id)>=2&&bf.dist.get(nd.id)<=3
+          &&[...nd.keys].some(k=>!nodes[origin].keys.has(k)));
+        if(cand.length){ holder=pick(cand).id; break; }
+      }
+      if(holder==null){ const bf=bfs(origin); par=bf.par; holder=[...par.keys()][0]; }
+      want=[...nodes[holder].keys].find(k=>!nodes[origin].keys.has(k))||[...nodes[holder].keys][0];
+      roles=new Map(); setRole(origin,"検索元",COL.query,14);
+      setEvent("query","",`N${origin} が「${want}」を探しています。検索クエリが、つながっている隣のノードへ、そのまた隣へと広がります。`);
+      const path=pathTo(par,holder,origin);
+      chain(path,COL.query,()=>{});
+      for(const nb of fan(adj.get(origin))) if(nb!==path[1]) spawn(origin,nb,COL.query,{r:2.6,
+        onArrive:()=>{ const nn=adj.get(nb).find(x=>x!==origin&&!path.includes(x)); if(nn!=null) spawn(nb,nn,COL.query,{r:2.4}); }});
+    });
+    step(4200,()=>{ setRole(holder,"所在",COL.key,12);nodes[holder].pulse=1;
+      setEvent("key","",`N${holder} が「${want}」を持っていました。「どこにあるか」という情報＝キーを、クエリが来た道を逆にたどって N${origin} へ返します。`);
+      chain(pathTo(par,holder,origin).reverse(),COL.key,()=>{});
+    });
+    step(4600,()=>{ setRole(origin,"要求元",COL.cache,8);
+      setEvent("cache","",`所在が分かったので、N${origin} は N${holder} からファイルのキャッシュを受け取ります。受け取った N${origin} も、以後は所在として配布する側になります。`);
+      burst(pathTo(par,holder,origin).reverse(),COL.cache,()=>{gainKey(origin,want);nodes[origin].pulse=1;});
+    });
+    step(5200,()=>{ stagePort0(true); });
+    step(11500,()=>{
+      setEvent("query","ひと通り完了","参加 → 検索 → 所在 → 転送 → Port0 の仲介、まで見ました。「▶ 再生」で自由に動かせます。",true);
+      demoMode=false;
+    });
+  }
+
+  function stagePort0(fromDemo){
+    if(!fromDemo){ stopDemo(); demoMode=true; setPlay(false); packets=[]; seqReset(); }
+    // 見やすい組を探す: 所在 O は Port0、仲介 M と要求元 R は Port0 でない（NAT の外を優先）、R は O と直接つながっていない
+    let O=null,M=null,R=null,bestScore=-1;
+    for(const o of nodes.filter(n=>n.port0)) for(const m of adj.get(o.id)) for(const r of adj.get(m)){
+      if(r===o.id||nodes[r].port0) continue;
+      let sc=1; if(nodes[m].nat==null) sc+=4; if(nodes[r].nat==null) sc+=4; if(!adj.get(o.id).includes(r)) sc+=2;
+      sc+=Math.min(3,Math.hypot(nodes[r].x-o.x,nodes[r].y-o.y)/120);
+      if(sc>bestScore){bestScore=sc;O=o;M=m;R=r;}
+    }
+    if(!O){ setEvent("relay","","いまの配置では、Port0 の仲介を見せられる組（Port0 の所在と、接続を受けられる仲介・要求元）がありません。「NAT の内側」のバーを動かしてください。"); demoMode=false; return; }
+    const want=[...O.keys][0];
+    roles=new Map();
+    setRole(R,"要求元 R",COL.cache,13);setRole(M,"仲介 M",COL.relay,13);setRole(O.id,"所在 O・Port0",COL.key,13);
+    setEvent("relay","",`要求元 N${R} が欲しいファイルは、Port0 の N${O.id} にあります。N${O.id} は NAT の内側にいて、外から接続を受けられません。直接はつなげません。`); seq.lock=true;
+    nodes[O.id].pulse=1;nodes[R].pulse=1;nodes[M].pulse=1;
+    after(3400,()=>{ setEvent("relay","",`両方とつながっている仲介 N${M} が、既存のリンクを使って、N${O.id} と N${R} の両方に相手の情報を知らせます。`);
+      spawn(M,O.id,COL.relay,{r:4}); after(600,()=>spawn(M,R,COL.relay,{r:4})); });
+    after(6800,()=>{ setEvent("conn","",`張れる側から張らせます。Port0 の N${O.id} の側から、要求元 N${R} へ、外向きに新しい TCP 接続を開始します。`);
+      spawn(O.id,R,COL.conn,{r:4}); });
+    after(9200,()=>{ setEvent("cache","",`接続成立。N${O.id} から N${R} へ「${want}」を転送します。`);
+      burst([O.id,R],COL.cache,()=>{ gainKey(R,want); if(!fromDemo) demoMode=false; }); });
+  }
+
+  // ---- シーケンス図（解説デモと Port0 のデモの流れを記録する） ----
+  const SEQLBL={}; let seq={actors:[],rows:[],phase:-1,roleOf:new Map()};
+  function seqReset(){ seq={actors:[],rows:[],phase:-1,roleOf:new Map()}; }
+  function seqPhase(ph){ if(seq.lock||seq.phase===ph)return; seq.phase=ph; seq.rows.push({div:true,ph}); }
+  function seqAdd(p){
+    if(p.color===COL.query&&p.r<3) return;                       // 脇へ広がるクエリは図に載せない
+    const now=performance.now();
+    for(let i=seq.rows.length-1;i>=0&&i>=seq.rows.length-4;i--){ const m=seq.rows[i];
+      if(!m.div&&m.a===p.a&&m.b===p.b&&m.color===p.color&&now-m.t<1500){ m.n++; m.p=p; return; } }
+    for(const id of [p.a,p.b]) if(!seq.actors.includes(id)) seq.actors.push(id);
+    seq.rows.push({a:p.a,b:p.b,color:p.color,p,t:now,n:1});
+  }
+  function seqLabel(m){ const c=m.color;
+    const base=c===COL.query?"検索クエリ":c===COL.key?"キー（所在）":c===COL.relay?"仲介の通知":
+      c===COL.cache?"キャッシュ転送":(m.p&&m.p.r<3||m.small)?"ノードの紹介":"接続";
+    return base+(m.n>1?" ×"+m.n:""); }
+  const sq=document.getElementById("sq"), sx=sq.getContext("2d"); let SW=0,SH=0, view="net";
+  function resizeSeq(){ const r=sq.getBoundingClientRect(); SW=r.width;SH=r.height; const d=Math.min(2,window.devicePixelRatio||1);
+    sq.width=Math.round(SW*d);sq.height=Math.round(SH*d);sx.setTransform(d,0,0,d,0,0); }
+  function drawSeq(){
+    const c=sx; c.clearRect(0,0,SW,SH);
+    const top=96, bot=SH-58, n=seq.actors.length;
+    c.textAlign="center"; c.textBaseline="middle";
+    if(!n){ c.fillStyle=COL.muted; c.font="13px -apple-system, 'Noto Sans JP', sans-serif";
+      c.fillText("「解説デモ」か「Port0 のデモ」を押すと、やり取りが上から順に描かれます。",SW/2,SH/2); return; }
+    const padL=SW<520?26:70, padR=SW<520?26:70, xs=new Map();
+    seq.actors.forEach((id,i)=>xs.set(id, n===1?SW/2:padL+(SW-padL-padR)*i/(n-1)));
+    const rowH=Math.min(34,(bot-top-10)/Math.max(1,seq.rows.length));
+    // ライフライン
+    for(const id of seq.actors){ const x=xs.get(id), nd=nodes[id]; if(!nd)continue;
+      c.strokeStyle=COL.line; c.lineWidth=1; c.setLineDash([3,4]); c.beginPath(); c.moveTo(x,top); c.lineTo(x,bot); c.stroke(); c.setLineDash([]);
+      const role=roles.get(id); if(role) seq.roleOf.set(id,{text:role.text,color:role.color});
+      const rl=seq.roleOf.get(id), col=rl?rl.color:COL.node;
+      c.fillStyle="#0d1520"; c.strokeStyle=nd.port0?COL.relay:col; c.lineWidth=1.4; if(nd.port0)c.setLineDash([3,3]);
+      const bw=SW<520?34:46; roundRectOn(c,x-bw/2,top-26,bw,22,6); c.fill(); c.stroke(); c.setLineDash([]);
+      c.fillStyle=COL.fg; c.font="700 "+(SW<520?10:12)+"px ui-monospace, monospace"; c.fillText("N"+id,x,top-15);
+      if(rl&&SW>=520){ c.fillStyle=rl.color; c.font="10px -apple-system, 'Noto Sans JP', sans-serif"; c.fillText(rl.text,x,top-38); }
+      if(SW>=520){ c.fillStyle=COL.muted; c.font="9px -apple-system, 'Noto Sans JP', sans-serif";
+        c.fillText(nd.port0?"NAT 内・Port0":nd.nat!=null?"NAT 内":"NAT の外",x,bot+10); }
+    }
+    // メッセージ
+    seq.rows.forEach((m,i)=>{ const y=top+10+rowH*(i+0.6);
+      if(m.div){ c.strokeStyle=PHASES[m.ph].pc; c.globalAlpha=.35; c.lineWidth=1; c.beginPath(); c.moveTo(8,y); c.lineTo(SW-8,y); c.stroke(); c.globalAlpha=1;
+        c.fillStyle=PHASES[m.ph].pc; c.font="700 11px -apple-system, 'Noto Sans JP', sans-serif"; c.textAlign="left";
+        c.fillText((m.ph+1)+". "+PHASES[m.ph].k,10,y-8); c.textAlign="center"; return; }
+      const xa=xs.get(m.a), xb=xs.get(m.b); if(xa==null||xb==null)return;
+      const alive=packets.includes(m.p), t=alive?easeInOut(Math.min(1,m.p.t)):1, xe=xa+(xb-xa)*t, dir=Math.sign(xb-xa)||1;
+      c.strokeStyle=m.color; c.fillStyle=m.color; c.lineWidth=alive?2.4:1.6; c.globalAlpha=alive?1:.85;
+      c.beginPath(); c.moveTo(xa,y); c.lineTo(xe,y); c.stroke();
+      c.beginPath(); c.arc(xa,y,2.4,0,7); c.fill();
+      if(alive){ c.shadowColor=m.color; c.shadowBlur=10; c.beginPath(); c.arc(xe,y,4,0,7); c.fill(); c.shadowBlur=0; }
+      else { c.beginPath(); c.moveTo(xe,y); c.lineTo(xe-dir*8,y-4); c.lineTo(xe-dir*8,y+4); c.closePath(); c.fill(); }
+      c.font="10.5px -apple-system, 'Noto Sans JP', sans-serif"; c.fillText(seqLabel(m),(xa+xb)/2,y-8); c.globalAlpha=1;
+    });
+  }
+  function roundRectOn(c,x,y,w,h,r){c.beginPath();c.moveTo(x+r,y);c.arcTo(x+w,y,x+w,y+h,r);c.arcTo(x+w,y+h,x,y+h,r);c.arcTo(x,y+h,x,y,r);c.arcTo(x,y,x+w,y,r);c.closePath();}
+  function setView(v){ view=v; cv.hidden=v!=="net"; sq.hidden=v!=="seq";
+    document.getElementById("tabNet").setAttribute("aria-selected",v==="net"); document.getElementById("tabSeq").setAttribute("aria-selected",v==="seq");
+    document.querySelector(".scope").style.visibility=v==="net"?"visible":"hidden";
+    if(v==="seq") resizeSeq(); else resize(); }
+
+  // ---- 表示 ----
+  const $=(id)=>document.getElementById(id);
+  const badge=$("badge"),msg=$("msg"),nowTitle=$("nowTitle"),nowDesc=$("nowDesc"),hintEl=$("hint"),pipeEl=$("pipe");
+  PHASES.forEach((p,i)=>{ const d=document.createElement("div"); d.className="pstep"; d.style.setProperty("--pc",p.pc);
+    const n=document.createElement("span"); n.className="pn"; n.textContent=i+1;
+    const t=document.createElement("span"); t.className="ptxt"; t.textContent=p.k; d.append(n,t); pipeEl.appendChild(d); });
+  const pipeSteps=[...pipeEl.children];
+  function setEvent(kind,label,text,neutral){
+    if(!demoMode&&!neutral&&playing&&busy>2){ const t=performance.now(); if(t-lastEv<1100&&kind!=="relay")return; if(t-lastEv<500)return; lastEv=t; }
+    const c=COL[kind]||COL.query, ph=neutral?null:kindPhase[kind];
+    if(demoMode&&ph!=null) seqPhase(ph);
+    const title=ph!=null?`${ph+1}. ${PHASES[ph].k}`:(label||"待機中");
+    badge.style.color=c;badge.textContent=label||(ph!=null?PHASES[ph].k:"待機");msg.textContent=text;
+    nowTitle.textContent=title; nowTitle.style.setProperty("--ac",c); nowDesc.textContent=text;
+    hintEl.style.setProperty("--ac",c);
+    hintEl.textContent=ph!=null?PHASES[ph].hint:"緑＝検索クエリ、紫＝キー（所在）、琥珀＝転送、青＝接続、赤＝Port0 の仲介。";
+    pipeSteps.forEach((el,i)=>el.classList.toggle("on",i===ph));
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    layout();
+    // 地面の輪（奥行きの手がかり）
+    ctx.strokeStyle=COL.line;ctx.lineWidth=1;
+    for(const R of [0.35,0.7,1.05]){ ctx.globalAlpha=.5;ctx.beginPath(); for(let i=0;i<=48;i++){const a=i/48*Math.PI*2,q=proj(Math.cos(a)*R,Math.sin(a)*R,0); i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y);} ctx.stroke(); }
+    ctx.globalAlpha=1;
+    const lod=nodes.length>300;     // 多いときは、まとめて描いて軽くする
+    if(lod){ ctx.strokeStyle=COL.nat;ctx.globalAlpha=.4;ctx.lineWidth=1;ctx.beginPath();
+      for(const na of nats){const g=na.ring;if(!g)continue; g.forEach((q,i)=>i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y)); ctx.closePath();}
+      ctx.stroke();ctx.globalAlpha=1; }
+    else for(const na of nats){const g=na.ring;if(!g)continue;ctx.save();
+      ctx.strokeStyle=COL.nat;ctx.fillStyle=COL.nat;ctx.setLineDash([4,3]);ctx.lineWidth=1.1;
+      ctx.beginPath();g.forEach((q,i)=>i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y));ctx.closePath();
+      ctx.globalAlpha=.07;ctx.fill();ctx.globalAlpha=.6;ctx.stroke();
+      ctx.setLineDash([]);ctx.globalAlpha=.8;ctx.font="11px ui-monospace, monospace";
+      ctx.textAlign="center";ctx.textBaseline="top";if(nats.length<=30)ctx.fillText(nats.length>9?"NAT":"NAT "+na.ip,na.low.x,na.low.y+3);ctx.restore();}
+    // 外のノードは上の層に浮かせ、地面まで細い柱と影を落とす
+    if(lod){ ctx.strokeStyle=COL.line;ctx.globalAlpha=.7;ctx.lineWidth=1;ctx.beginPath();
+      for(const nd of nodes) if(nd.nat==null){ctx.moveTo(nd.x,nd.y);ctx.lineTo(nd.gx,nd.gy);} ctx.stroke();ctx.globalAlpha=1; }
+    else for(const nd of nodes) if(nd.nat==null){ ctx.strokeStyle=COL.line;ctx.globalAlpha=.9;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(nd.x,nd.y);ctx.lineTo(nd.gx,nd.gy);ctx.stroke();
+      ctx.fillStyle="#000";ctx.globalAlpha=.3;ctx.beginPath();ctx.ellipse(nd.gx,nd.gy,nr(nd)*1.1,nr(nd)*.45,0,0,7);ctx.fill();ctx.globalAlpha=1; }
+    ctx.strokeStyle=COL.line;ctx.lineWidth=1;ctx.globalAlpha=edges.length>1500?.45:1;ctx.beginPath();
+    for(const e of edges){const A=nodes[e.a],B=nodes[e.b];ctx.moveTo(A.x,A.y);ctx.lineTo(B.x,B.y);}ctx.stroke();ctx.globalAlpha=1;
+    let order;
+    if(lod){ // 役割も脈動もないノードは、色ごとに 1 回で塗る
+      order=[]; const g1=[],g2=[],g3=[];
+      for(const nd of nodes){ if(roles.has(nd.id)||nd.pulse>0){order.push(nd);continue;} (nd.nat==null?g3:nd.keys.size>2?g2:g1).push(nd); }
+      for(const [grp,col] of [[g1,COL.nodeDim],[g2,COL.node],[g3,"#eef4fa"]]){ ctx.fillStyle=col;ctx.beginPath();
+        for(const nd of grp){const r=nr(nd);ctx.moveTo(nd.x+r,nd.y);ctx.arc(nd.x,nd.y,r,0,7);} ctx.fill(); }
+      ctx.strokeStyle=COL.relay;ctx.globalAlpha=.55;ctx.lineWidth=1;ctx.beginPath();   // 内側のノード＝Port0 の印（赤い縁）
+      for(const grp of [g1,g2]) for(const nd of grp){const r=nr(nd)+1.2;ctx.moveTo(nd.x+r,nd.y);ctx.arc(nd.x,nd.y,r,0,7);} ctx.stroke();ctx.globalAlpha=1;
+      order.sort((p,q)=>q.d-p.d);
+    } else
+      order=nodes.slice().sort((p,q)=>q.d-p.d);   // 奥から手前へ
+    for(const nd of order){
+      const r=nr(nd), role=roles.get(nd.id);
+      if(nd.pulse>0){ctx.fillStyle=role?role.color:COL.query;ctx.globalAlpha=.25*nd.pulse;ctx.beginPath();ctx.arc(nd.x,nd.y,r+8*nd.pulse,0,7);ctx.fill();ctx.globalAlpha=1;}
+      // 地の色: 外のノード＝白、NAT の内側＝灰。役割が付いている間は、その役割の色で塗る
+      ctx.fillStyle=nd.nat==null?"#eef4fa":(nd.keys.size>2?COL.node:COL.nodeDim);ctx.beginPath();ctx.arc(nd.x,nd.y,r,0,7);ctx.fill();
+      if(role){ctx.fillStyle=role.color;ctx.globalAlpha=Math.min(1,role.ttl);ctx.fill();ctx.globalAlpha=1;}
+      ctx.lineWidth=1.5;ctx.strokeStyle="#0d1520";ctx.stroke();
+      if(role){ ctx.strokeStyle=role.color;ctx.lineWidth=2;ctx.globalAlpha=Math.min(1,role.ttl);
+        ctx.beginPath();ctx.arc(nd.x,nd.y,r+(nd.port0?8:4)*SC,0,7);ctx.stroke();ctx.globalAlpha=1; }
+      if(nd.port0){ctx.strokeStyle=COL.relay;if(!lod)ctx.setLineDash([3,3]);ctx.lineWidth=1+SC;ctx.beginPath();ctx.arc(nd.x,nd.y,r+1+3*SC,0,7);ctx.stroke();ctx.setLineDash([]);
+        if(!role&&nats.length<=9){ctx.fillStyle=COL.relay;ctx.font="9px ui-monospace, monospace";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText("P0",nd.x,nd.y-r-9);}}
+      if(showLabels){ctx.fillStyle=COL.muted;ctx.font="10px ui-monospace, monospace";ctx.textAlign="center";ctx.textBaseline="top";ctx.fillText("N"+nd.id,nd.x,nd.y+r+2);}
+    }
+    for(const nd of nodes) drawFolder(nd,nr(nd));
+    // パケットは地面（線）の上を、放物線を描いて飛ぶ。高さは距離に比例。地面には影を落とす
+    const many=packets.length>160||nodes.length>300;
+    for(const p of packets){const A=nodes[p.a],B=nodes[p.b];if(!A||!B)continue;
+      const tt=easeInOut(p.t), dx=B.nx-A.nx, dy=B.ny-A.ny, za=nz(A), zb=nz(B), h=Math.min(0.42,0.1+Math.hypot(dx,dy)*0.32);
+      const at=(u)=>proj(A.nx+dx*u, A.ny+dy*u, za+(zb-za)*u+h*4*u*(1-u));
+      const g=proj(A.nx+dx*tt,A.ny+dy*tt,0), q=at(tt), lift=4*tt*(1-tt), x=q.x, y=q.y;
+      // 影（地面）
+      ctx.fillStyle="#000";ctx.globalAlpha=.3;ctx.beginPath();ctx.ellipse(g.x,g.y,p.r*g.k*1.2,p.r*g.k*.5,0,0,7);ctx.fill();
+      // 尾（弧に沿う）
+      const t0=Math.max(0,tt-0.22), n=many?2:5;
+      ctx.strokeStyle=p.color;ctx.globalAlpha=.4;ctx.lineWidth=2.4*q.k;ctx.beginPath();
+      for(let i=0;i<=n;i++){const w=at(t0+(tt-t0)*i/n); i?ctx.lineTo(w.x,w.y):ctx.moveTo(w.x,w.y);} ctx.stroke();ctx.globalAlpha=1;
+      const pr=p.r*q.k*(1+lift*.2);
+      ctx.fillStyle=p.color;if(!many){ctx.shadowColor=p.color;ctx.shadowBlur=10;}
+      ctx.beginPath();ctx.arc(x,y,pr,0,7);ctx.fill();ctx.shadowBlur=0;
+      ctx.fillStyle="rgba(255,255,255,.55)";ctx.beginPath();ctx.arc(x-pr*.3,y-pr*.3,pr*.35,0,7);ctx.fill();}
+    // 役割ラベルは最前面に
+    const rl=[...roles]; const shown=demoMode?rl:rl.slice(-(busy>3?4:8));
+    for(const [id,role] of shown){ const nd=nodes[id]; if(!nd)continue; const r=nr(nd);
+      ctx.font="700 12px -apple-system, 'Noto Sans JP', sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";
+      const tw=ctx.measureText(role.text).width; let lx=clamp(nd.x,tw/2+8,W-tw/2-8), ly=nd.y-r-(nd.port0?20:16);
+      if(ly<14) ly=nd.y+r+18;
+      ctx.globalAlpha=Math.min(1,role.ttl); ctx.fillStyle="rgba(8,13,20,.9)";
+      roundRect(lx-tw/2-6,ly-10,tw+12,20,5);ctx.fill();
+      ctx.strokeStyle=role.color;ctx.lineWidth=1;ctx.stroke();
+      ctx.fillStyle=role.color;ctx.fillText(role.text,lx,ly+0.5);ctx.globalAlpha=1; }
+  }
+  // 手元のファイル数: 小さなフォルダと数字。増えた直後は琥珀色で光り「+1」が浮く
+  function drawFolder(nd,r){
+    if(nodes.length>90&&!(nd.gain>0)&&nd.keys.size<=2) return;   // 多いときは、増えたノードだけ出す
+    const g=nd.gain||0, fx=nd.x+r+2, fy=nd.y+r-3, w=9, h=6.5, c=g>0?COL.cache:COL.muted;
+    ctx.save(); ctx.globalAlpha=g>0?1:.75; ctx.fillStyle=c;
+    ctx.beginPath(); ctx.moveTo(fx,fy-1.6); ctx.lineTo(fx+3.4,fy-1.6); ctx.lineTo(fx+4.6,fy); ctx.lineTo(fx+w,fy);
+    ctx.lineTo(fx+w,fy+h); ctx.lineTo(fx,fy+h); ctx.closePath(); ctx.fill();
+    ctx.font=(g>0?"700 11px":"10px")+" ui-monospace, monospace"; ctx.textAlign="left"; ctx.textBaseline="middle";
+    ctx.fillStyle=g>0?COL.cache:COL.fg; ctx.fillText(nd.keys.size,fx+w+2,fy+h/2);
+    if(g>0){ ctx.globalAlpha=Math.min(1,g*1.6); ctx.font="700 11px ui-monospace, monospace"; ctx.fillStyle=COL.cache;
+      ctx.fillText("+1",fx+w+12,fy-4-(1-g)*14); }
+    ctx.restore();
+  }
+  function roundRect(x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);
+    ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
+  const easeInOut=(t)=>t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
+
+  let last=performance.now();
+  function frame(now){
+    let dt=(now-last)/1000;last=now;dt=Math.min(dt,0.05);
+    for(let i=packets.length-1;i>=0;i--){const p=packets[i];p.t+=dt/p.dur;
+      if(p.t>=1){const cb=p.onArrive;packets.splice(i,1);if(cb)cb();}}
+    for(const nd of nodes){ if(nd.pulse>0) nd.pulse=Math.max(0,nd.pulse-dt*1.6); if(nd.gain>0) nd.gain=Math.max(0,nd.gain-dt*0.35); }
+    for(const [id,r] of roles){ r.ttl-=dt*Math.max(0.5,speedMul); if(r.ttl<=0) roles.delete(id); }
+    if(playing&&!demoMode){ timeToNext-=dt*speedMul;
+      let guard=0;
+      while(timeToNext<=0&&guard++<4){ timeToNext+=(0.7+rng()*0.6)*3.4/Math.pow(busy,1.35);
+        if(packets.length>60+busy*45) continue;
+        if(rng()<0.78) issueQuery(); else joinNode();
+      }}
+    if(cam.auto&&!cam.drag&&!reduce) cam.yaw+=dt*0.07;
+    liveT-=dt; if(liveT<=0){ liveT=0.2; updateLive(); }
+    if(view==="seq") drawSeq(); else draw();requestAnimationFrame(frame);
+  }
+
+  const liveEl=$("live"); const LIVE=[["conn","接続"],["query","検索クエリ"],["key","キー"],["cache","転送"],["relay","仲介"]];
+  function updateLive(){ const c={}; for(const p of packets) c[p.color]=(c[p.color]||0)+1;
+    liveEl.innerHTML=LIVE.map(([k,l])=>`<span style="color:${COL[k]}">${l}<b>${c[COL[k]]||0}</b></span>`).join("")+`<span>取得の累計<b>${gained}</b></span>`; }
+  function resize(){ if(cv.hidden)return; DPR=Math.min(2,window.devicePixelRatio||1);
+    const r=cv.getBoundingClientRect();W=r.width;H=r.height;
+    cv.width=Math.round(W*DPR);cv.height=Math.round(H*DPR);ctx.setTransform(DPR,0,0,DPR,0,0);layout(); }
+  const playBtn=$("play");
+  function setPlay(v){ playing=v;playBtn.setAttribute("aria-pressed",v);playBtn.textContent=v?"■ 停止":"▶ 再生"; }
+  playBtn.onclick=()=>{ stopDemo(); setPlay(!playing); };
+  $("demo").onclick=()=>runDemo();
+  $("query").onclick=()=>{ stopDemo(); issueQuery(); };
+  $("port0").onclick=()=>stagePort0(false);
+  $("join").onclick=()=>{ stopDemo(); joinNode(); };
+  $("reset").onclick=()=>{ stopDemo(); build(seedN);resize(); };
+  $("labels").onclick=(e)=>{ showLabels=!showLabels;e.currentTarget.setAttribute("aria-pressed",showLabels); };
+  const natR=$("natr");
+  const ratioIn=()=>{ NAT_RATIO=+natR.value/100; $("natrv").textContent=natR.value+"%";
+    clearTimeout(rebuildT); rebuildT=setTimeout(()=>{ stopDemo(); build(seedN); resize(); },160); };
+  natR.oninput=ratioIn;
+  const nodesR=$("nodes"),nodesv=$("nodesv");let rebuildT=null;
+  nodesR.oninput=()=>{ seedN=+nodesR.value;nodesv.textContent=seedN;clearTimeout(rebuildT);
+    rebuildT=setTimeout(()=>{stopDemo();build(seedN);resize();},120); };
+  const busyR=$("busy"); busyR.oninput=()=>{ busy=+busyR.value; $("busyv").textContent=busy; };
+  const speedR=$("speed"),speedv=$("speedv");
+  speedR.oninput=()=>{speedMul=+speedR.value;speedv.textContent=speedMul.toFixed(1)+"×";};
+
+  new ResizeObserver(()=>{ if(view==="seq") resizeSeq(); else resize(); }).observe(cv.parentElement);
+  let px=0,py=0;
+  cv.style.cursor="grab"; cv.style.touchAction="pan-y";
+  cv.addEventListener("pointerdown",e=>{cam.drag=true;setSpin(false);px=e.clientX;py=e.clientY;cv.setPointerCapture(e.pointerId);cv.style.cursor="grabbing";});
+  cv.addEventListener("pointermove",e=>{ if(!cam.drag)return; cam.yaw+=(e.clientX-px)*0.008; cam.pitch=clamp(cam.pitch+(e.clientY-py)*0.006,0.2,1.45); px=e.clientX;py=e.clientY; });
+  const up=()=>{cam.drag=false;cv.style.cursor="grab";}; cv.addEventListener("pointerup",up); cv.addEventListener("pointercancel",up);
+  const spinB=$("spin"); function setSpin(v){ cam.auto=v; spinB.textContent=v?"回転を止める":"回転させる"; }
+  spinB.onclick=()=>setSpin(!cam.auto); setSpin(!reduce);
+  $("tabNet").onclick=()=>setView("net"); $("tabSeq").onclick=()=>setView("seq");
+  if(reduce) setPlay(false);
+  build(seedN);resize();setPlay(playing);requestAnimationFrame(frame);
+  window.__wna={runDemo,stagePort0};
+})();
+</script>
+</body>
+</html>
